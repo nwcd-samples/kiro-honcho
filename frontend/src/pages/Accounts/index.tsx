@@ -17,7 +17,65 @@ const { Title } = Typography
 const { Option } = Select
 const { TextArea } = Input
 
-const regions = [
+// 复制到剪贴板的通用方法（兼容非 HTTPS 环境）
+const copyToClipboard = (text: string) => {
+  // 优先使用 navigator.clipboard（需要 HTTPS 或 localhost）
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      message.success(t('common.copied'));
+    }).catch(() => {
+      fallbackCopy(text);
+    });
+  } else {
+    fallbackCopy(text);
+  }
+};
+
+// Fallback 复制方法（使用 textarea）
+const fallbackCopy = (text: string) => {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    message.success(t('common.copied'));
+  } catch {
+    message.error(t('common.copyFailed') || '复制失败');
+  }
+  document.body.removeChild(textarea);
+};
+
+// SSO region 支持所有 AWS regions
+const ssoRegions = [
+  { value: 'us-east-1', labelKey: 'accounts.regionVirginia' },
+  { value: 'us-east-2', label: 'Ohio' },
+  { value: 'us-west-1', label: 'N. California' },
+  { value: 'us-west-2', label: 'Oregon' },
+  { value: 'eu-central-1', labelKey: 'accounts.regionFrankfurt' },
+  { value: 'eu-central-2', label: 'Zurich' },
+  { value: 'eu-west-1', label: 'Ireland' },
+  { value: 'eu-west-2', label: 'London' },
+  { value: 'eu-west-3', label: 'Paris' },
+  { value: 'eu-south-1', label: 'Milan' },
+  { value: 'eu-south-2', label: 'Spain' },
+  { value: 'eu-north-1', label: 'Stockholm' },
+  { value: 'ap-northeast-1', label: 'Tokyo' },
+  { value: 'ap-northeast-2', label: 'Seoul' },
+  { value: 'ap-northeast-3', label: 'Osaka' },
+  { value: 'ap-southeast-1', label: 'Singapore' },
+  { value: 'ap-southeast-2', label: 'Sydney' },
+  { value: 'ap-south-1', label: 'Mumbai' },
+  { value: 'ca-central-1', label: 'Canada Central' },
+  { value: 'sa-east-1', label: 'São Paulo' },
+]
+
+// Kiro region 只支持弗吉尼亚和法兰克福
+const kiroRegions = [
   { value: 'us-east-1', labelKey: 'accounts.regionVirginia' },
   { value: 'eu-central-1', labelKey: 'accounts.regionFrankfurt' },
 ]
@@ -149,7 +207,7 @@ export default function Accounts() {
           <Space size={4}>
             <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>{url}</a>
             <Button type="text" size="small" icon={<CopyOutlined />}
-              onClick={() => { navigator.clipboard.writeText(url); message.success(t('common.copied')); }} />
+              onClick={() => copyToClipboard(url)} />
           </Space>
         );
       },
@@ -248,7 +306,7 @@ export default function Accounts() {
                     <Space>
                       <a href={url} target="_blank" rel="noreferrer">{url}</a>
                       <Button type="text" size="small" icon={<CopyOutlined />}
-                        onClick={() => { navigator.clipboard.writeText(url); message.success(t('common.copied')); }} />
+                        onClick={() => copyToClipboard(url)} />
                     </Space>
                   );
                 })()
@@ -295,10 +353,12 @@ export default function Accounts() {
           </Form.Item>
           <Space style={{ width: '100%' }} size="large">
             <Form.Item name="sso_region" label={t('accounts.ssoRegion')} style={{ marginBottom: 0, width: 240 }}>
-              <Select>{regions.map(r => <Option key={r.value} value={r.value}>{t(r.labelKey)} ({r.value})</Option>)}</Select>
+              <Select showSearch optionFilterProp="children">
+                {ssoRegions.map(r => <Option key={r.value} value={r.value}>{r.labelKey ? t(r.labelKey) : r.label} ({r.value})</Option>)}
+              </Select>
             </Form.Item>
             <Form.Item name="kiro_region" label={t('accounts.kiroRegion')} style={{ marginBottom: 0, width: 240 }}>
-              <Select>{regions.map(r => <Option key={r.value} value={r.value}>{t(r.labelKey)} ({r.value})</Option>)}</Select>
+              <Select>{kiroRegions.map(r => <Option key={r.value} value={r.value}>{t(r.labelKey)} ({r.value})</Option>)}</Select>
             </Form.Item>
           </Space>
           <Form.Item name="sync_interval_minutes" label={t('accounts.autoSync')} style={{ marginTop: 16 }}

@@ -194,7 +194,13 @@
         "processing": "Processing...",
         "subscribePlanTitle": "Assign subscription for {{email}}",
         "canceledTab": "Cancelled Subscriptions (All Accounts)",
-        "activeTab": "Active Subscriptions"
+        "activeTab": "Active Subscriptions",
+        "batchChangePlan": "Batch Change Plan",
+        "batchChangePlanTitle": "Batch Change Plan",
+        "batchChangePlanHint": "Will change plan for {{count}} selected users",
+        "batchChangePlanSuccess": "Successfully changed plan for {{count}} users",
+        "batchChangePlanPartial": "{{count}} users failed:\n{{details}}",
+        "batchChangePlanFailed": "Batch change failed"
     },
     "logs": {
         "title": "Operation Logs",

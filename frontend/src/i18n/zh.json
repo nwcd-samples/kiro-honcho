@@ -194,7 +194,13 @@
         "processing": "处理中...",
         "subscribePlanTitle": "为 {{email}} 分配订阅",
         "canceledTab": "已取消订阅（全部账号）",
-        "activeTab": "活跃订阅"
+        "activeTab": "活跃订阅",
+        "batchChangePlan": "批量变更套餐",
+        "batchChangePlanTitle": "批量变更套餐",
+        "batchChangePlanHint": "将为选中的 {{count}} 个用户变更套餐",
+        "batchChangePlanSuccess": "成功变更 {{count}} 个用户的套餐",
+        "batchChangePlanPartial": "{{count}} 个用户变更失败:\n{{details}}",
+        "batchChangePlanFailed": "批量变更失败"
     },
     "logs": {
         "title": "操作日志",

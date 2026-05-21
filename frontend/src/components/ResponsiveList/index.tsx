@@ -27,6 +27,7 @@ interface ResponsiveListProps<T> {
     } | false;
     scroll?: { x?: number };
     onChange?: (pagination: any, filters: any, sorter: any) => void;
+    rowSelection?: any;
 }
 
 function ResponsiveList<T extends Record<string, any>>({
@@ -37,6 +38,7 @@ function ResponsiveList<T extends Record<string, any>>({
     pagination,
     scroll,
     onChange,
+    rowSelection,
 }: ResponsiveListProps<T>) {
     const isMobile = useIsMobile();
 
@@ -55,6 +57,7 @@ function ResponsiveList<T extends Record<string, any>>({
                 pagination={pagination}
                 scroll={scroll}
                 onChange={onChange}
+                rowSelection={rowSelection}
             />
         );
     }

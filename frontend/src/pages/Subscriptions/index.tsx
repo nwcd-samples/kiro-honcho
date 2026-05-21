@@ -3,7 +3,7 @@ import {
   Button, Space, Tag, Modal, Form, Select, Input, message,
   Popconfirm, Card, Typography, Switch, Upload, Divider, Alert,
 } from 'antd';
-import { PlusOutlined, ReloadOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, UploadOutlined, DownloadOutlined, DownOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -74,8 +74,14 @@ const SubscriptionManagement: React.FC = () => {
   const [batchRunning, setBatchRunning] = React.useState(false);
   const batchLogRef = React.useRef<HTMLDivElement>(null);
 
+  // 多选相关状态
+  const [selectedRowKeys, setSelectedRowKeys] = React.useState<React.Key[]>([]);
+  const [batchChangePlanModalVisible, setBatchChangePlanModalVisible] = React.useState(false);
+  const [batchChangePlanLoading, setBatchChangePlanLoading] = React.useState(false);
+
   const [createForm] = Form.useForm();
   const [changePlanForm] = Form.useForm();
+  const [batchChangePlanForm] = Form.useForm();
 
   React.useEffect(() => {
     if (!accountId || isNaN(accountId)) { navigate('/accounts'); return; }
@@ -245,6 +251,59 @@ const SubscriptionManagement: React.FC = () => {
     a.download = 'users_template.csv'; a.click();
   };
 
+  // 批量变更套餐
+  const handleBatchChangePlan = async (values: { subscription_type: string }) => {
+    if (selectedRowKeys.length === 0) return;
+    setBatchChangePlanLoading(true);
+    try {
+      // 获取选中用户的邮箱
+      const selectedUsers = users.filter(u => selectedRowKeys.includes(u.id));
+      const emails = selectedUsers.map(u => u.email);
+
+      const result = await subscriptionService.batchChangePlan(
+        accountId,
+        emails,
+        values.subscription_type
+      );
+
+      if (result.success_count > 0) {
+        message.success(t('subscriptions.batchChangePlanSuccess', {
+          count: result.success_count
+        }));
+      }
+      if (result.failed_count > 0) {
+        const failedEmails = result.results
+          .filter(r => !r.success)
+          .map(r => `${r.email}: ${r.message}`)
+          .join('\n');
+        message.warning(t('subscriptions.batchChangePlanPartial', {
+          count: result.failed_count,
+          details: failedEmails
+        }));
+      }
+
+      setBatchChangePlanModalVisible(false);
+      batchChangePlanForm.resetFields();
+      setSelectedRowKeys([]);
+      fetchUsers();
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || t('subscriptions.batchChangePlanFailed'));
+    } finally {
+      setBatchChangePlanLoading(false);
+    }
+  };
+
+  // 多选配置
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: (newSelectedRowKeys: React.Key[]) => {
+      setSelectedRowKeys(newSelectedRowKeys);
+    },
+    getCheckboxProps: (record: User) => ({
+      disabled: getUserLifecycleStatus(record) === 'unsubscribed',
+    }),
+  };
+
   // ===== Columns =====
   const columns = [
     { title: t('common.email'), dataIndex: 'email', key: 'email', ellipsis: true, width: 180 },
@@ -315,15 +374,29 @@ const SubscriptionManagement: React.FC = () => {
           </Select>
         </Space>
         <Space wrap>
+          {selectedRowKeys.length > 0 && (
+            <Button
+              type="primary"
+              onClick={() => setBatchChangePlanModalVisible(true)}
+            >
+              {t('subscriptions.batchChangePlan')} ({selectedRowKeys.length})
+            </Button>
+          )}
           <Button icon={<ReloadOutlined />} onClick={fetchUsers}>{t('common.refresh')}</Button>
           <Button icon={<UploadOutlined />} onClick={() => setCsvModalVisible(true)}>{t('subscriptions.csvImport')}</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalVisible(true)}>{t('subscriptions.addUser')}</Button>
         </Space>
       </div>
 
-      <ResponsiveList columns={columns} dataSource={users} rowKey="id" loading={loading}
+      <ResponsiveList
+        columns={columns}
+        dataSource={users}
+        rowKey="id"
+        loading={loading}
+        rowSelection={rowSelection}
         pagination={{ total, pageSize: 500, showTotal: (n: number) => `${t('common.total', { count: n })}` }}
-        scroll={{ x: 740 }} />
+        scroll={{ x: 740 }}
+      />
 
       {/* 创建用户 */}
       <Modal title={t('subscriptions.createUserTitle')} open={createModalVisible} onOk={() => createForm.submit()}
@@ -358,6 +431,32 @@ const SubscriptionManagement: React.FC = () => {
         onCancel={() => { setChangePlanModal(null); changePlanForm.resetFields(); }}>
         <p>{t('common.email')}: {changePlanModal?.email}</p>
         <Form form={changePlanForm} onFinish={handleChangePlan} layout="vertical">
+          <Form.Item name="subscription_type" label={t('subscriptions.plan')} rules={[{ required: true }]}>
+            <Select>
+              <Select.Option value="Q_DEVELOPER_STANDALONE_PRO">{t('subscriptions.plans.pro')}</Select.Option>
+              <Select.Option value="Q_DEVELOPER_STANDALONE_PRO_PLUS">{t('subscriptions.plans.proPlus')}</Select.Option>
+              <Select.Option value="Q_DEVELOPER_STANDALONE_POWER">{t('subscriptions.plans.power')}</Select.Option>
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 批量变更套餐 */}
+      <Modal
+        title={t('subscriptions.batchChangePlanTitle')}
+        open={batchChangePlanModalVisible}
+        onOk={() => batchChangePlanForm.submit()}
+        onCancel={() => { setBatchChangePlanModalVisible(false); batchChangePlanForm.resetFields(); }}
+        okButtonProps={{ loading: batchChangePlanLoading }}
+      >
+        <Alert
+          message={t('subscriptions.batchChangePlanHint', { count: selectedRowKeys.length })}
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Form form={batchChangePlanForm} onFinish={handleBatchChangePlan} layout="vertical"
+          initialValues={{ subscription_type: 'Q_DEVELOPER_STANDALONE_PRO' }}>
           <Form.Item name="subscription_type" label={t('subscriptions.plan')} rules={[{ required: true }]}>
             <Select>
               <Select.Option value="Q_DEVELOPER_STANDALONE_PRO">{t('subscriptions.plans.pro')}</Select.Option>

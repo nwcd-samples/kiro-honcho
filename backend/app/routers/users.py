@@ -16,7 +16,11 @@ from app.schemas.user import (
     EmailVerificationResponse,
     GroupListResponse,
     AddUserToGroupRequest,
-    AddUserToGroupResponse
+    AddUserToGroupResponse,
+    BatchResetPasswordRequest,
+    BatchDeleteRequest,
+    BatchActionResult,
+    BatchActionResponse,
 )
 from app.services import AccountService
 from app.services.log_service import OperationLogService
@@ -357,6 +361,182 @@ async def create_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create user: {str(e)}"
         )
+
+
+@router.post("/batch-reset-password", response_model=BatchActionResponse)
+async def batch_reset_password(
+    account_id: int,
+    request: BatchResetPasswordRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """Batch send password reset (or OTP) emails to multiple users."""
+    account_service = AccountService(session)
+    account = await account_service.get_account(account_id)
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"AWS account {account_id} not found"
+        )
+
+    # Load target users belonging to this account
+    query = select(ICUser).where(
+        ICUser.aws_account_id == account_id,
+        ICUser.id.in_(request.user_ids),
+    )
+    result = await session.execute(query)
+    users = {u.id: u for u in result.scalars().all()}
+
+    access_key, secret_key = account_service.decrypt_credentials(account)
+    aws_client = AWSClient(access_key, secret_key, account.sso_region)
+    ic_client = IdentityCenterClient(aws_client, account.sso_region)
+    log_service = OperationLogService(session)
+    operator = current_user.get("username") if current_user else None
+
+    results: list[BatchActionResult] = []
+    success_count = 0
+    failed_count = 0
+
+    for uid in request.user_ids:
+        ic_user = users.get(uid)
+        if not ic_user:
+            failed_count += 1
+            results.append(BatchActionResult(user_id=uid, email=None, success=False, message="User not found"))
+            continue
+        try:
+            if request.mode == "otp":
+                res = ic_client.send_password_reset_otp(ic_user.user_id)
+            else:
+                res = ic_client.send_password_reset_email(ic_user.user_id)
+
+            if res["success"]:
+                success_count += 1
+            else:
+                failed_count += 1
+            results.append(BatchActionResult(
+                user_id=uid, email=ic_user.email,
+                success=res["success"], message=res["message"],
+            ))
+        except Exception as e:
+            failed_count += 1
+            results.append(BatchActionResult(user_id=uid, email=ic_user.email, success=False, message=str(e)))
+
+    await log_service.log_operation(
+        account_id=account_id,
+        operation="batch_reset_password",
+        target=f"users:{len(request.user_ids)}",
+        status="success" if failed_count == 0 else "failed",
+        message=f"批量重置密码: 成功 {success_count}，失败 {failed_count}",
+        operator=operator,
+    )
+
+    return BatchActionResponse(
+        total=len(request.user_ids),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
+@router.post("/batch-delete", response_model=BatchActionResponse)
+async def batch_delete_users(
+    account_id: int,
+    request: BatchDeleteRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: dict = Depends(get_current_user)
+):
+    """Batch delete users: cancel subscriptions and remove from Identity Center."""
+    account_service = AccountService(session)
+    account = await account_service.get_account(account_id)
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"AWS account {account_id} not found"
+        )
+
+    query = select(ICUser).where(
+        ICUser.aws_account_id == account_id,
+        ICUser.id.in_(request.user_ids),
+    )
+    result = await session.execute(query)
+    users = {u.id: u for u in result.scalars().all()}
+
+    access_key, secret_key = account_service.decrypt_credentials(account)
+    aws_client = AWSClient(access_key, secret_key, account.sso_region)
+    ic_client = IdentityCenterClient(aws_client, account.sso_region)
+
+    from app.aws import KiroSubscriptionClient
+    kiro_client = KiroSubscriptionClient(
+        aws_client,
+        kiro_region=account.kiro_region,
+        sso_region=account.sso_region,
+    )
+    log_service = OperationLogService(session)
+    operator = current_user.get("username") if current_user else None
+
+    results: list[BatchActionResult] = []
+    success_count = 0
+    failed_count = 0
+
+    for uid in request.user_ids:
+        ic_user = users.get(uid)
+        if not ic_user:
+            failed_count += 1
+            results.append(BatchActionResult(user_id=uid, email=None, success=False, message="User not found"))
+            continue
+        user_email = ic_user.email
+        try:
+            # Step 1: cancel Kiro subscription if any
+            sub_query = select(KiroSubscription).where(
+                KiroSubscription.aws_account_id == account_id,
+                KiroSubscription.principal_id == ic_user.user_id,
+            )
+            subscription = await session.scalar(sub_query)
+            if subscription:
+                del_sub_result = kiro_client.delete_assignment(
+                    instance_arn=account.instance_arn,
+                    principal_id=ic_user.user_id,
+                    subscription_type=subscription.subscription_type,
+                )
+                if not del_sub_result["success"]:
+                    kiro_client.delete_assignment(
+                        instance_arn=account.instance_arn,
+                        principal_id=ic_user.user_id,
+                    )
+                await session.delete(subscription)
+                await session.flush()
+
+            # Step 2: remove from Identity Center
+            ic_client.delete_user(account.identity_store_id, ic_user.user_id)
+
+            # Step 3: remove local record
+            await session.delete(ic_user)
+            await session.commit()
+
+            success_count += 1
+            results.append(BatchActionResult(user_id=uid, email=user_email, success=True, message="Deleted"))
+        except Exception as e:
+            await session.rollback()
+            failed_count += 1
+            results.append(BatchActionResult(user_id=uid, email=user_email, success=False, message=str(e)))
+
+    await log_service.log_operation(
+        account_id=account_id,
+        operation="batch_delete_user",
+        target=f"users:{len(request.user_ids)}",
+        status="success" if failed_count == 0 else "failed",
+        message=f"批量删除用户: 成功 {success_count}，失败 {failed_count}",
+        operator=operator,
+    )
+
+    return BatchActionResponse(
+        total=len(request.user_ids),
+        success_count=success_count,
+        failed_count=failed_count,
+        results=results,
+    )
 
 
 @router.get("/{user_id}", response_model=UserResponse)

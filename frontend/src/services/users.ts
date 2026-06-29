@@ -35,6 +35,20 @@ export interface CreateUserRequest {
   send_password_reset?: boolean;
 }
 
+export interface BatchActionResult {
+  user_id: number;
+  email: string | null;
+  success: boolean;
+  message: string;
+}
+
+export interface BatchActionResponse {
+  total: number;
+  success_count: number;
+  failed_count: number;
+  results: BatchActionResult[];
+}
+
 export const userService = {
   async listUsers(
     accountId: number,
@@ -77,6 +91,29 @@ export const userService = {
 
   async sendVerificationEmail(accountId: number, userId: number): Promise<{ success: boolean; message: string }> {
     const response = await api.post(`/accounts/${accountId}/users/${userId}/verify-email`);
+    return response.data;
+  },
+
+  async batchResetPassword(
+    accountId: number,
+    userIds: number[],
+    mode: 'email' | 'otp' = 'email'
+  ): Promise<BatchActionResponse> {
+    const response = await api.post<BatchActionResponse>(
+      `/accounts/${accountId}/users/batch-reset-password`,
+      { user_ids: userIds, mode }
+    );
+    return response.data;
+  },
+
+  async batchDeleteUsers(
+    accountId: number,
+    userIds: number[]
+  ): Promise<BatchActionResponse> {
+    const response = await api.post<BatchActionResponse>(
+      `/accounts/${accountId}/users/batch-delete`,
+      { user_ids: userIds }
+    );
     return response.data;
   },
 

@@ -39,6 +39,11 @@ class IdentityCenterClient:
         URL: identitystore.{sso_region}.amazonaws.com/identitystore/
         Target: AWSIdentityStoreService.SearchUsers
         Signing: service=identitystore, region=sso_region
+
+        Raises:
+            RuntimeError: 当内部 API 调用失败时抛出，调用方应回退到标准 list_users。
+            注意：绝不能在失败时静默返回空列表，否则会被误判为"账号无用户"，
+            导致同步时清空本地用户数据或重置邮箱验证状态。
         """
         all_users = []
         next_token = None
@@ -61,7 +66,9 @@ class IdentityCenterClient:
             )
             
             if resp.status_code != 200:
-                break
+                raise RuntimeError(
+                    f"SearchUsers failed: HTTP {resp.status_code} {resp.text[:200]}"
+                )
             
             data = resp.json()
             
@@ -89,7 +96,7 @@ class IdentityCenterClient:
                     "Email": primary_email,
                     "GivenName": name_data.get("givenName", {}).get("StringValue", ""),
                     "FamilyName": name_data.get("familyName", {}).get("StringValue", ""),
-                    "Status": "enabled" if user.get("Active") else "disabled",
+                    "Status": self._derive_status(user),
                     "UserStatus": user.get("UserStatus", ""),
                     "EmailVerified": email_verified,
                 })
@@ -100,6 +107,26 @@ class IdentityCenterClient:
                 break
         
         return all_users
+
+    @staticmethod
+    def _derive_status(user: Dict[str, Any]) -> str:
+        """
+        统一推导用户启用/禁用状态。
+
+        优先使用 'Active' 布尔字段；其次使用 'UserStatus'；
+        都缺失时默认 'enabled'（与 list_users / get_user_by_id 保持一致，
+        AWS Identity Center 用户默认即为启用状态）。
+        """
+        active = user.get("Active")
+        if active is not None:
+            return "enabled" if active else "disabled"
+
+        user_status = (user.get("UserStatus") or "").upper()
+        if user_status:
+            disabled_states = {"DISABLED", "INACTIVE", "SUSPENDED"}
+            return "disabled" if user_status in disabled_states else "enabled"
+
+        return "enabled"
     
     def get_instance_info(self, instance_arn: Optional[str] = None) -> Dict[str, str]:
         """

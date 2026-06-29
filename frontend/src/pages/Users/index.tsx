@@ -35,6 +35,7 @@ const Users: React.FC = () => {
   const [createModalVisible, setCreateModalVisible] = React.useState(false);
   const [csvModalVisible, setCsvModalVisible] = React.useState(false);
   const [csvFile, setCsvFile] = React.useState<UploadFile | null>(null);
+  const [csvSendEmail, setCsvSendEmail] = React.useState(true);
   const [batchLogs, setBatchLogs] = React.useState<string[]>([]);
   const [batchRunning, setBatchRunning] = React.useState(false);
   const batchLogRef = React.useRef<HTMLDivElement>(null);
@@ -149,7 +150,7 @@ const Users: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('send_password_reset', 'true');
+      formData.append('send_password_reset', csvSendEmail ? 'true' : 'false');
 
       const authData = localStorage.getItem('kiro-auth');
       let token = '';
@@ -431,6 +432,10 @@ const Users: React.FC = () => {
             下载 CSV 模板
           </Button>
           <Divider />
+          <Space>
+            <Switch checked={csvSendEmail} onChange={setCsvSendEmail} />
+            <span>发送邀请/重置密码邮件</span>
+          </Space>
           <Upload
             accept=".csv"
             maxCount={1}

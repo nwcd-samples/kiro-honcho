@@ -200,7 +200,19 @@
         "batchChangePlanHint": "将为选中的 {{count}} 个用户变更套餐",
         "batchChangePlanSuccess": "成功变更 {{count}} 个用户的套餐",
         "batchChangePlanPartial": "{{count}} 个用户变更失败:\n{{details}}",
-        "batchChangePlanFailed": "批量变更失败"
+        "batchChangePlanFailed": "批量变更失败",
+        "sendPasswordReset": "发送重置密码邮件",
+        "batchResetPassword": "批量重置密码",
+        "batchResetPasswordTitle": "批量重置密码",
+        "batchResetPasswordConfirm": "确定为选中的 {{count}} 个用户发送重置密码邮件？",
+        "batchResetPasswordSuccess": "已为 {{count}} 个用户发送重置密码邮件",
+        "batchResetPasswordFailed": "批量重置密码失败",
+        "batchDelete": "批量删除",
+        "batchDeleteTitle": "批量删除用户",
+        "batchDeleteConfirm": "确定删除选中的 {{count}} 个用户？将同时取消其 Kiro 订阅并从 Identity Center 移除，此操作不可恢复。",
+        "batchDeleteSuccess": "已删除 {{count}} 个用户",
+        "batchDeleteFailed": "批量删除失败",
+        "batchActionPartial": "{{count}} 个用户操作失败"
     },
     "logs": {
         "title": "操作日志",
@@ -221,14 +233,15 @@
             "delete_subscription": "删除订阅",
             "change_plan": "更改计划",
             "auto_subscribe": "自动订阅",
-            "batch_create_user": "批量创建用户"
+            "batch_create_user": "批量创建用户",
+            "batch_reset_password": "批量重置密码",
+            "batch_delete_user": "批量删除用户"
         },
         "statuses": {
             "success": "成功",
             "failed": "失败",
             "pending": "进行中"
-        }
-    },
+        }    },
     "mfa": {
         "setupTitle": "启用 MFA (两步验证)",
         "scanQr": "使用 Google Authenticator 或其他 TOTP App 扫描二维码：",

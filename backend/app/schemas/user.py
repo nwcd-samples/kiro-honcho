@@ -63,6 +63,33 @@ class PasswordResetResponse(BaseModel):
     message: str
 
 
+class BatchResetPasswordRequest(BaseModel):
+    """Schema for batch password reset request."""
+    user_ids: List[int] = Field(..., min_length=1)
+    mode: str = Field(default="email", pattern="^(email|otp)$")
+
+
+class BatchDeleteRequest(BaseModel):
+    """Schema for batch delete users request."""
+    user_ids: List[int] = Field(..., min_length=1)
+
+
+class BatchActionResult(BaseModel):
+    """Schema for a single batch action result."""
+    user_id: int
+    email: Optional[str] = None
+    success: bool
+    message: str
+
+
+class BatchActionResponse(BaseModel):
+    """Schema for batch action response."""
+    total: int
+    success_count: int
+    failed_count: int
+    results: List[BatchActionResult]
+
+
 class EmailVerificationResponse(BaseModel):
     """Schema for email verification response."""
     success: bool

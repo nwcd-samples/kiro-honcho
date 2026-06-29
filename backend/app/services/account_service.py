@@ -355,10 +355,24 @@ class AccountService:
             
             # Sync users - 使用内部 API 获取邮箱验证状态
             identity_store_id = account.identity_store_id
-            aws_users = ic_client.search_users_with_verification(identity_store_id)
-            # 如果内部 API 失败，fallback 到标准 API
-            if not aws_users:
+            # has_verification 标记本次数据是否包含可靠的邮箱验证状态。
+            # 内部 API 失败时回退到标准 list_users（不含验证状态），
+            # 此时必须保留数据库中已有的 email_verified，避免被错误重置。
+            try:
+                aws_users = ic_client.search_users_with_verification(identity_store_id)
+                has_verification = True
+            except Exception:
                 aws_users = ic_client.list_users(identity_store_id)
+                has_verification = False
+
+            # 防御性检查：若未获取到任何用户，可能是 AWS API 异常。
+            # 此时直接返回失败，绝不继续执行后续的"清理本地多余用户"逻辑，
+            # 否则会误删全部本地用户及其订阅。
+            if not aws_users:
+                return {
+                    "success": False,
+                    "message": "未从 AWS 获取到任何用户（API 可能调用失败），已跳过同步以保护本地数据",
+                }
             
             synced_users = 0
             for user_data in aws_users:
@@ -369,8 +383,6 @@ class AccountService:
                 )
                 existing = await self.session.scalar(query)
                 
-                email_verified = user_data.get("EmailVerified", False)
-                
                 if existing:
                     # Update
                     existing.user_name = user_data.get("UserName", "")
@@ -379,7 +391,9 @@ class AccountService:
                     existing.given_name = user_data.get("GivenName")
                     existing.family_name = user_data.get("FamilyName")
                     existing.status = user_data.get("Status", "enabled")
-                    existing.email_verified = email_verified
+                    # 仅在拥有可靠验证数据时更新，否则保留原值
+                    if has_verification:
+                        existing.email_verified = user_data.get("EmailVerified", False)
                     existing.last_synced = datetime.utcnow()
                 else:
                     # Create
@@ -392,7 +406,7 @@ class AccountService:
                         given_name=user_data.get("GivenName"),
                         family_name=user_data.get("FamilyName"),
                         status=user_data.get("Status", "enabled"),
-                        email_verified=email_verified,
+                        email_verified=user_data.get("EmailVerified", False),
                         last_synced=datetime.utcnow()
                     )
                     self.session.add(new_user)

@@ -200,7 +200,19 @@
         "batchChangePlanHint": "Will change plan for {{count}} selected users",
         "batchChangePlanSuccess": "Successfully changed plan for {{count}} users",
         "batchChangePlanPartial": "{{count}} users failed:\n{{details}}",
-        "batchChangePlanFailed": "Batch change failed"
+        "batchChangePlanFailed": "Batch change failed",
+        "sendPasswordReset": "Send password reset email",
+        "batchResetPassword": "Batch Reset Password",
+        "batchResetPasswordTitle": "Batch Reset Password",
+        "batchResetPasswordConfirm": "Send password reset email to {{count}} selected users?",
+        "batchResetPasswordSuccess": "Password reset email sent to {{count}} users",
+        "batchResetPasswordFailed": "Batch reset password failed",
+        "batchDelete": "Batch Delete",
+        "batchDeleteTitle": "Batch Delete Users",
+        "batchDeleteConfirm": "Delete {{count}} selected users? Their Kiro subscriptions will be cancelled and they will be removed from Identity Center. This cannot be undone.",
+        "batchDeleteSuccess": "Deleted {{count}} users",
+        "batchDeleteFailed": "Batch delete failed",
+        "batchActionPartial": "{{count}} users failed"
     },
     "logs": {
         "title": "Operation Logs",
@@ -221,7 +233,9 @@
             "delete_subscription": "Delete Subscription",
             "change_plan": "Change Plan",
             "auto_subscribe": "Auto Subscribe",
-            "batch_create_user": "Batch Create Users"
+            "batch_create_user": "Batch Create Users",
+            "batch_reset_password": "Batch Reset Password",
+            "batch_delete_user": "Batch Delete Users"
         },
         "statuses": {
             "success": "Success",

@@ -70,6 +70,7 @@ const SubscriptionManagement: React.FC = () => {
   const [csvModalVisible, setCsvModalVisible] = React.useState(false);
   const [changePlanModal, setChangePlanModal] = React.useState<User | null>(null);
   const [csvFile, setCsvFile] = React.useState<UploadFile | null>(null);
+  const [csvSendEmail, setCsvSendEmail] = React.useState(true);
   const [batchLogs, setBatchLogs] = React.useState<string[]>([]);
   const [batchRunning, setBatchRunning] = React.useState(false);
   const batchLogRef = React.useRef<HTMLDivElement>(null);
@@ -78,6 +79,7 @@ const SubscriptionManagement: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<React.Key[]>([]);
   const [batchChangePlanModalVisible, setBatchChangePlanModalVisible] = React.useState(false);
   const [batchChangePlanLoading, setBatchChangePlanLoading] = React.useState(false);
+  const [batchActionLoading, setBatchActionLoading] = React.useState(false);
 
   const [createForm] = Form.useForm();
   const [changePlanForm] = Form.useForm();
@@ -112,7 +114,7 @@ const SubscriptionManagement: React.FC = () => {
         family_name: values.family_name || undefined,
         auto_subscribe: values.auto_subscribe ?? true,
         subscription_type: values.subscription_type,
-        send_password_reset: true,
+        send_password_reset: values.send_password_reset ?? true,
       });
       message.success('用户已创建，后台正在处理邮件和订阅');
       fetchUsers();
@@ -204,7 +206,7 @@ const SubscriptionManagement: React.FC = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('send_password_reset', 'true');
+      formData.append('send_password_reset', csvSendEmail ? 'true' : 'false');
       const authData = localStorage.getItem('kiro-auth');
       let token = '';
       if (authData) { try { token = JSON.parse(authData).state?.accessToken || ''; } catch { } }
@@ -293,15 +295,67 @@ const SubscriptionManagement: React.FC = () => {
     }
   };
 
+  // 批量重置密码
+  const handleBatchResetPassword = () => {
+    if (selectedRowKeys.length === 0) return;
+    Modal.confirm({
+      title: t('subscriptions.batchResetPasswordTitle'),
+      content: t('subscriptions.batchResetPasswordConfirm', { count: selectedRowKeys.length }),
+      okButtonProps: { loading: batchActionLoading },
+      onOk: async () => {
+        setBatchActionLoading(true);
+        try {
+          const result = await userService.batchResetPassword(accountId, selectedRowKeys.map(Number));
+          if (result.success_count > 0) {
+            message.success(t('subscriptions.batchResetPasswordSuccess', { count: result.success_count }));
+          }
+          if (result.failed_count > 0) {
+            message.warning(t('subscriptions.batchActionPartial', { count: result.failed_count }));
+          }
+          setSelectedRowKeys([]);
+        } catch (e: any) {
+          message.error(e.response?.data?.detail || t('subscriptions.batchResetPasswordFailed'));
+        } finally {
+          setBatchActionLoading(false);
+        }
+      },
+    });
+  };
+
+  // 批量删除用户
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) return;
+    Modal.confirm({
+      title: t('subscriptions.batchDeleteTitle'),
+      content: t('subscriptions.batchDeleteConfirm', { count: selectedRowKeys.length }),
+      okButtonProps: { danger: true, loading: batchActionLoading },
+      onOk: async () => {
+        setBatchActionLoading(true);
+        try {
+          const result = await userService.batchDeleteUsers(accountId, selectedRowKeys.map(Number));
+          if (result.success_count > 0) {
+            message.success(t('subscriptions.batchDeleteSuccess', { count: result.success_count }));
+          }
+          if (result.failed_count > 0) {
+            message.warning(t('subscriptions.batchActionPartial', { count: result.failed_count }));
+          }
+          setSelectedRowKeys([]);
+          fetchUsers();
+        } catch (e: any) {
+          message.error(e.response?.data?.detail || t('subscriptions.batchDeleteFailed'));
+        } finally {
+          setBatchActionLoading(false);
+        }
+      },
+    });
+  };
+
   // 多选配置
   const rowSelection = {
     selectedRowKeys,
     onChange: (newSelectedRowKeys: React.Key[]) => {
       setSelectedRowKeys(newSelectedRowKeys);
     },
-    getCheckboxProps: (record: User) => ({
-      disabled: getUserLifecycleStatus(record) === 'unsubscribed',
-    }),
   };
 
   // ===== Columns =====
@@ -375,12 +429,20 @@ const SubscriptionManagement: React.FC = () => {
         </Space>
         <Space wrap>
           {selectedRowKeys.length > 0 && (
-            <Button
-              type="primary"
-              onClick={() => setBatchChangePlanModalVisible(true)}
-            >
-              {t('subscriptions.batchChangePlan')} ({selectedRowKeys.length})
-            </Button>
+            <>
+              <Button
+                type="primary"
+                onClick={() => setBatchChangePlanModalVisible(true)}
+              >
+                {t('subscriptions.batchChangePlan')} ({selectedRowKeys.length})
+              </Button>
+              <Button onClick={handleBatchResetPassword} loading={batchActionLoading}>
+                {t('subscriptions.batchResetPassword')} ({selectedRowKeys.length})
+              </Button>
+              <Button danger onClick={handleBatchDelete} loading={batchActionLoading}>
+                {t('subscriptions.batchDelete')} ({selectedRowKeys.length})
+              </Button>
+            </>
           )}
           <Button icon={<ReloadOutlined />} onClick={fetchUsers}>{t('common.refresh')}</Button>
           <Button icon={<UploadOutlined />} onClick={() => setCsvModalVisible(true)}>{t('subscriptions.csvImport')}</Button>
@@ -403,7 +465,7 @@ const SubscriptionManagement: React.FC = () => {
         onCancel={() => { setCreateModalVisible(false); createForm.resetFields(); }} width={480}>
         <Alert message={t('subscriptions.createUserHint')} type="info" showIcon style={{ marginBottom: 16 }} />
         <Form form={createForm} onFinish={handleCreateUser} layout="vertical"
-          initialValues={{ auto_subscribe: true, subscription_type: 'Q_DEVELOPER_STANDALONE_PRO' }}>
+          initialValues={{ auto_subscribe: true, subscription_type: 'Q_DEVELOPER_STANDALONE_PRO', send_password_reset: true }}>
           <Form.Item name="email" label={t('common.email')} rules={[{ required: true, type: 'email' }]}>
             <Input placeholder="user@example.com" />
           </Form.Item>
@@ -423,6 +485,7 @@ const SubscriptionManagement: React.FC = () => {
               </Form.Item>
             ) : null}
           </Form.Item>
+          <Form.Item name="send_password_reset" label={t('subscriptions.sendPasswordReset')} valuePropName="checked"><Switch /></Form.Item>
         </Form>
       </Modal>
 
@@ -474,6 +537,12 @@ const SubscriptionManagement: React.FC = () => {
         <Alert message={<>{t('subscriptions.csvHint')}</>} type="info" showIcon style={{ marginBottom: 16 }} />
         <Button icon={<DownloadOutlined />} onClick={downloadCsvTemplate} type="dashed" block>{t('subscriptions.downloadTemplate')}</Button>
         <Divider />
+        <div style={{ marginBottom: 12 }}>
+          <Space>
+            <Switch checked={csvSendEmail} onChange={setCsvSendEmail} />
+            <span>{t('subscriptions.sendPasswordReset')}</span>
+          </Space>
+        </div>
         <Upload accept=".csv" maxCount={1} beforeUpload={() => false}
           fileList={csvFile ? [csvFile] : []} onChange={({ fileList }) => setCsvFile(fileList[0] || null)}>
           <Button icon={<UploadOutlined />} block>{t('subscriptions.selectCsv')}</Button>

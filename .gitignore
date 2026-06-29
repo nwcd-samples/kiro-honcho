@@ -3,3 +3,4 @@ kiro_cli.egg-info/*
 .env
 TASK_LOG.md
 .vscode/settings.json
+data/kiro_honcho.db

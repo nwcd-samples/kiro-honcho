@@ -1,7 +1,7 @@
 import React from 'react';
 import {
   Button, Space, Tag, Modal, Form, Select, Input, message,
-  Popconfirm, Card, Typography, Switch, Upload, Divider, Alert,
+  Popconfirm, Card, Typography, Switch, Upload, Divider, Alert, Progress,
 } from 'antd';
 import { PlusOutlined, ReloadOutlined, UploadOutlined, DownloadOutlined, DownOutlined } from '@ant-design/icons';
 import type { UploadFile } from 'antd/es/upload/interface';
@@ -12,6 +12,7 @@ import { subscriptionService } from '../../services/subscriptions';
 import { userService, User } from '../../services/users';
 import { accountService, AWSAccount } from '../../services/accounts';
 import ResponsiveList from '../../components/ResponsiveList';
+import { postSSEStream, SSEMessage } from '../../lib/sseStream';
 
 const { Text } = Typography;
 const { Search } = Input;
@@ -73,13 +74,13 @@ const SubscriptionManagement: React.FC = () => {
   const [csvSendEmail, setCsvSendEmail] = React.useState(true);
   const [batchLogs, setBatchLogs] = React.useState<string[]>([]);
   const [batchRunning, setBatchRunning] = React.useState(false);
+  const [batchProgress, setBatchProgress] = React.useState<{ current: number; total: number; ok: number; failed: number }>({ current: 0, total: 0, ok: 0, failed: 0 });
+  const [batchFailures, setBatchFailures] = React.useState<{ email: string; reason: string }[]>([]);
   const batchLogRef = React.useRef<HTMLDivElement>(null);
 
   // 多选相关状态
   const [selectedRowKeys, setSelectedRowKeys] = React.useState<React.Key[]>([]);
   const [batchChangePlanModalVisible, setBatchChangePlanModalVisible] = React.useState(false);
-  const [batchChangePlanLoading, setBatchChangePlanLoading] = React.useState(false);
-  const [batchActionLoading, setBatchActionLoading] = React.useState(false);
 
   const [createForm] = Form.useForm();
   const [changePlanForm] = Form.useForm();
@@ -203,41 +204,13 @@ const SubscriptionManagement: React.FC = () => {
     setCsvFile(null);
     setBatchRunning(true);
     setBatchLogs(['⏳ 正在上传...']);
+    setBatchProgress({ current: 0, total: 0, ok: 0, failed: 0 });
+    setBatchFailures([]);
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('send_password_reset', csvSendEmail ? 'true' : 'false');
-      const authData = localStorage.getItem('kiro-auth');
-      let token = '';
-      if (authData) { try { token = JSON.parse(authData).state?.accessToken || ''; } catch { } }
-      const response = await fetch(`/api/accounts/${accountId}/batch/users/csv/stream`, {
-        method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData,
-      });
-      if (!response.ok || !response.body) {
-        const errText = await response.text();
-        setBatchLogs(prev => [...prev, `❌ 失败: ${errText}`]); return;
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.message) {
-                const time = new Date().toLocaleTimeString();
-                setBatchLogs(prev => [...prev, `[${time}] ${data.message}`]);
-              }
-            } catch { }
-          }
-        }
-      }
+      await postSSEStream(`/api/accounts/${accountId}/batch/users/csv/stream`, formData, handleBatchMessage);
     } catch (e: any) { setBatchLogs(prev => [...prev, `❌ ${e.message}`]); }
     finally { setBatchRunning(false); fetchUsers(); }
   };
@@ -253,46 +226,63 @@ const SubscriptionManagement: React.FC = () => {
     a.download = 'users_template.csv'; a.click();
   };
 
+  // 批量操作通用 SSE 执行器：复用底部「批量进度」Modal 显示实时进度
+  const handleBatchMessage = React.useCallback((data: SSEMessage) => {
+    setBatchProgress(prev => ({
+      current: data.current ?? (data.type === 'done' ? prev.total : prev.current),
+      total: data.total ?? prev.total,
+      ok: data.success_count ?? prev.ok,
+      failed: data.failed_count ?? prev.failed,
+    }));
+    if (data.failures && data.failures.length > 0) {
+      setBatchFailures(data.failures);
+    }
+    if (data.message) {
+      const time = new Date().toLocaleTimeString();
+      setBatchLogs(prev => [...prev, `[${time}] ${data.message}`]);
+    }
+  }, []);
+
+  // 下载失败明细 CSV，便于人工重试
+  const downloadFailures = () => {
+    const escape = (v: string) => `"${(v || '').replace(/"/g, '""')}"`;
+    const header = 'email,reason\n';
+    const rows = batchFailures.map(f => `${escape(f.email)},${escape(f.reason)}`).join('\n');
+    // \uFEFF BOM 让 Excel 正确识别 UTF-8
+    const blob = new Blob(['\uFEFF' + header + rows], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `batch_failures_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const runBatchStream = async (url: string, body: Record<string, unknown>) => {
+    setBatchRunning(true);
+    setBatchLogs(['⏳ 正在启动批量操作...']);
+    setBatchProgress({ current: 0, total: 0, ok: 0, failed: 0 });
+    setBatchFailures([]);
+    try {
+      await postSSEStream(url, body, handleBatchMessage);
+    } catch (e: any) {
+      setBatchLogs(prev => [...prev, `❌ ${e.message}`]);
+    } finally {
+      setBatchRunning(false);
+      setSelectedRowKeys([]);
+      fetchUsers();
+    }
+  };
+
   // 批量变更套餐
   const handleBatchChangePlan = async (values: { subscription_type: string }) => {
     if (selectedRowKeys.length === 0) return;
-    setBatchChangePlanLoading(true);
-    try {
-      // 获取选中用户的邮箱
-      const selectedUsers = users.filter(u => selectedRowKeys.includes(u.id));
-      const emails = selectedUsers.map(u => u.email);
-
-      const result = await subscriptionService.batchChangePlan(
-        accountId,
-        emails,
-        values.subscription_type
-      );
-
-      if (result.success_count > 0) {
-        message.success(t('subscriptions.batchChangePlanSuccess', {
-          count: result.success_count
-        }));
-      }
-      if (result.failed_count > 0) {
-        const failedEmails = result.results
-          .filter(r => !r.success)
-          .map(r => `${r.email}: ${r.message}`)
-          .join('\n');
-        message.warning(t('subscriptions.batchChangePlanPartial', {
-          count: result.failed_count,
-          details: failedEmails
-        }));
-      }
-
-      setBatchChangePlanModalVisible(false);
-      batchChangePlanForm.resetFields();
-      setSelectedRowKeys([]);
-      fetchUsers();
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || t('subscriptions.batchChangePlanFailed'));
-    } finally {
-      setBatchChangePlanLoading(false);
-    }
+    setBatchChangePlanModalVisible(false);
+    batchChangePlanForm.resetFields();
+    await runBatchStream(
+      `/api/accounts/${accountId}/batch/change-plan/stream`,
+      { user_ids: selectedRowKeys.map(Number), subscription_type: values.subscription_type },
+    );
   };
 
   // 批量重置密码
@@ -301,24 +291,10 @@ const SubscriptionManagement: React.FC = () => {
     Modal.confirm({
       title: t('subscriptions.batchResetPasswordTitle'),
       content: t('subscriptions.batchResetPasswordConfirm', { count: selectedRowKeys.length }),
-      okButtonProps: { loading: batchActionLoading },
-      onOk: async () => {
-        setBatchActionLoading(true);
-        try {
-          const result = await userService.batchResetPassword(accountId, selectedRowKeys.map(Number));
-          if (result.success_count > 0) {
-            message.success(t('subscriptions.batchResetPasswordSuccess', { count: result.success_count }));
-          }
-          if (result.failed_count > 0) {
-            message.warning(t('subscriptions.batchActionPartial', { count: result.failed_count }));
-          }
-          setSelectedRowKeys([]);
-        } catch (e: any) {
-          message.error(e.response?.data?.detail || t('subscriptions.batchResetPasswordFailed'));
-        } finally {
-          setBatchActionLoading(false);
-        }
-      },
+      onOk: () => runBatchStream(
+        `/api/accounts/${accountId}/batch/reset-password/stream`,
+        { user_ids: selectedRowKeys.map(Number), mode: 'email' },
+      ),
     });
   };
 
@@ -328,25 +304,11 @@ const SubscriptionManagement: React.FC = () => {
     Modal.confirm({
       title: t('subscriptions.batchDeleteTitle'),
       content: t('subscriptions.batchDeleteConfirm', { count: selectedRowKeys.length }),
-      okButtonProps: { danger: true, loading: batchActionLoading },
-      onOk: async () => {
-        setBatchActionLoading(true);
-        try {
-          const result = await userService.batchDeleteUsers(accountId, selectedRowKeys.map(Number));
-          if (result.success_count > 0) {
-            message.success(t('subscriptions.batchDeleteSuccess', { count: result.success_count }));
-          }
-          if (result.failed_count > 0) {
-            message.warning(t('subscriptions.batchActionPartial', { count: result.failed_count }));
-          }
-          setSelectedRowKeys([]);
-          fetchUsers();
-        } catch (e: any) {
-          message.error(e.response?.data?.detail || t('subscriptions.batchDeleteFailed'));
-        } finally {
-          setBatchActionLoading(false);
-        }
-      },
+      okButtonProps: { danger: true },
+      onOk: () => runBatchStream(
+        `/api/accounts/${accountId}/batch/delete/stream`,
+        { user_ids: selectedRowKeys.map(Number) },
+      ),
     });
   };
 
@@ -436,10 +398,10 @@ const SubscriptionManagement: React.FC = () => {
               >
                 {t('subscriptions.batchChangePlan')} ({selectedRowKeys.length})
               </Button>
-              <Button onClick={handleBatchResetPassword} loading={batchActionLoading}>
+              <Button onClick={handleBatchResetPassword}>
                 {t('subscriptions.batchResetPassword')} ({selectedRowKeys.length})
               </Button>
-              <Button danger onClick={handleBatchDelete} loading={batchActionLoading}>
+              <Button danger onClick={handleBatchDelete}>
                 {t('subscriptions.batchDelete')} ({selectedRowKeys.length})
               </Button>
             </>
@@ -510,7 +472,6 @@ const SubscriptionManagement: React.FC = () => {
         open={batchChangePlanModalVisible}
         onOk={() => batchChangePlanForm.submit()}
         onCancel={() => { setBatchChangePlanModalVisible(false); batchChangePlanForm.resetFields(); }}
-        okButtonProps={{ loading: batchChangePlanLoading }}
       >
         <Alert
           message={t('subscriptions.batchChangePlanHint', { count: selectedRowKeys.length })}
@@ -552,7 +513,37 @@ const SubscriptionManagement: React.FC = () => {
       {/* 批量进度 */}
       <Modal title={t('subscriptions.batchProgress')} open={batchRunning || batchLogs.length > 0}
         closable={!batchRunning} maskClosable={false}
-        footer={batchRunning ? null : <Button type="primary" onClick={() => setBatchLogs([])}>{t('common.close')}</Button>} width={640}>
+        footer={batchRunning ? null : (
+          <Space>
+            {batchFailures.length > 0 && (
+              <Button danger icon={<DownloadOutlined />} onClick={downloadFailures}>
+                下载失败列表 ({batchFailures.length})
+              </Button>
+            )}
+            <Button type="primary" onClick={() => { setBatchLogs([]); setBatchProgress({ current: 0, total: 0, ok: 0, failed: 0 }); setBatchFailures([]); }}>{t('common.close')}</Button>
+          </Space>
+        )} width={640}>
+        {batchProgress.total > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <Progress
+              percent={Math.round((batchProgress.current / batchProgress.total) * 100)}
+              status={batchRunning ? 'active' : (batchProgress.failed > 0 ? 'exception' : 'success')}
+            />
+            <Space size="small" style={{ fontSize: 13 }}>
+              <span>{batchProgress.current}/{batchProgress.total}</span>
+              {!batchRunning && <Tag color="green">✅ {batchProgress.ok}</Tag>}
+              {!batchRunning && batchProgress.failed > 0 && <Tag color="red">❌ {batchProgress.failed}</Tag>}
+            </Space>
+          </div>
+        )}
+        {!batchRunning && batchFailures.length > 0 && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message={`有 ${batchFailures.length} 个用户处理失败，可下载失败列表后手动重试。`}
+          />
+        )}
         <div ref={batchLogRef} style={{
           background: '#1a1a1a', color: '#e0e0e0', padding: 12, borderRadius: 6,
           fontFamily: 'monospace', fontSize: 13, lineHeight: 1.6, maxHeight: 400, overflowY: 'auto', whiteSpace: 'pre-wrap',

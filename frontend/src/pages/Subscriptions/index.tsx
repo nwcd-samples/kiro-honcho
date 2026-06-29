@@ -291,10 +291,13 @@ const SubscriptionManagement: React.FC = () => {
     Modal.confirm({
       title: t('subscriptions.batchResetPasswordTitle'),
       content: t('subscriptions.batchResetPasswordConfirm', { count: selectedRowKeys.length }),
-      onOk: () => runBatchStream(
-        `/api/accounts/${accountId}/batch/reset-password/stream`,
-        { user_ids: selectedRowKeys.map(Number), mode: 'email' },
-      ),
+      onOk: () => {
+        // 不返回 Promise：确认框立即关闭，再由进度蒙版接管，避免双蒙版叠加
+        runBatchStream(
+          `/api/accounts/${accountId}/batch/reset-password/stream`,
+          { user_ids: selectedRowKeys.map(Number), mode: 'email' },
+        );
+      },
     });
   };
 
@@ -305,10 +308,13 @@ const SubscriptionManagement: React.FC = () => {
       title: t('subscriptions.batchDeleteTitle'),
       content: t('subscriptions.batchDeleteConfirm', { count: selectedRowKeys.length }),
       okButtonProps: { danger: true },
-      onOk: () => runBatchStream(
-        `/api/accounts/${accountId}/batch/delete/stream`,
-        { user_ids: selectedRowKeys.map(Number) },
-      ),
+      onOk: () => {
+        // 不返回 Promise：确认框立即关闭，再由进度蒙版接管，避免双蒙版叠加
+        runBatchStream(
+          `/api/accounts/${accountId}/batch/delete/stream`,
+          { user_ids: selectedRowKeys.map(Number) },
+        );
+      },
     });
   };
 
